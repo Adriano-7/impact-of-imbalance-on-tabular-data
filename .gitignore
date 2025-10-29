@@ -1,0 +1,20 @@
+digest.txt
+script.py
+arquive/
+
+# Data files
+/data/raw/
+/data/processed/
+/data/synthetic/
+
+# Environment folders
+__pycache__/
+
+# Jupyter Notebook checkpoints
+
+data/
+
+*.bkp
+
+notebooks/script.py
+src/workspace/
