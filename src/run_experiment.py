@@ -24,22 +24,22 @@ config = get_config()
 
 BASE_PATH = Path(__file__).parent.parent
 PROCESSED_PATH = BASE_PATH / "data" / "processed"
-SYNTHETIC_PATH = BASE_PATH / "data" / "synthetic"
+SYNTHETIC_PATH_BASE = BASE_PATH / "data" / "synthetic"
 RESULTS_PATH = BASE_PATH / "results"
 TABLES_PATH = RESULTS_PATH / "tables"
 FIGURES_PATH = RESULTS_PATH / "figures"
 MODELS_PATH = BASE_PATH / "models"
 
-# Domain-specific constants (dataset schema)
+SYNTHETIC_PATH = None
+
 TARGET_FEATURE = "Severity"
 CLASS_BENIGN = 0
 CLASS_MALIGNANT = 1
 
-# Experimental parameters from config
 RANDOM_STATE = config.experiment.random_state
 GENERATORS_TO_TEST = config.models.generators
 
-SYNTHETIC_PATH.mkdir(exist_ok=True)
+SYNTHETIC_PATH_BASE.mkdir(exist_ok=True)
 TABLES_PATH.mkdir(exist_ok=True)
 FIGURES_PATH.mkdir(exist_ok=True)
 MODELS_PATH.mkdir(exist_ok=True)
@@ -244,8 +244,16 @@ class ProgressTracker:
 
 
 def main():
+    global SYNTHETIC_PATH
+
     print("Mammographic Mass Experimental Pipeline")
-    
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    SYNTHETIC_PATH = SYNTHETIC_PATH_BASE / f"run_{timestamp}"
+    SYNTHETIC_PATH.mkdir(exist_ok=True)
+
+    print(f"Synthetic data will be saved to: {SYNTHETIC_PATH}")
+
     start_time = time.time()
     test_path = PROCESSED_PATH / "test.csv"
     
@@ -321,18 +329,16 @@ def main():
         'strategy_': 'strategy'
     })
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    detailed_filename = f"detailed_results_{timestamp}.csv"
-    summary_filename = f"summary_results_{timestamp}.csv"
+    run_folder = TABLES_PATH / f"run_{timestamp}"
+    run_folder.mkdir(exist_ok=True)
+
+    results_df.to_csv(run_folder / "detailed_experiment_results.csv", index=False)
+    summary_df.to_csv(run_folder / "summary_experiment_results.csv", index=False)
+
+    print(f"\nResults saved to: {run_folder}")
+    print(f"Synthetic data saved to: {SYNTHETIC_PATH}")
     
-    results_df.to_csv(TABLES_PATH / detailed_filename, index=False)
-    summary_df.to_csv(TABLES_PATH / summary_filename, index=False)
-    
-    print(f"\nResults saved to: {TABLES_PATH}")
-    
-    print("\n" + "-"*10)
     print("Performance by Model (F1-Minority / ROC-AUC):")
-    print("-"*10)
     
     summary_table = results_df.groupby('model').agg({
         'f1_minority': ['mean', 'std'],
@@ -345,9 +351,7 @@ def main():
         auc_mean = summary_table.loc[model, ('roc_auc', 'mean')]
         auc_std = summary_table.loc[model, ('roc_auc', 'std')]
         print(f"   {model:<15} | F1: {f1_mean:.4f} (±{f1_std:.4f}) | AUC: {auc_mean:.4f} (±{auc_std:.4f})")
-    
-    print("-"*10 + "\n")
-        
+            
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     main()

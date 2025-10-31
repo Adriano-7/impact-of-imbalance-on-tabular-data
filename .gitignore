@@ -6,13 +6,13 @@ arquive/
 /data/raw/
 /data/processed/
 /data/synthetic/
+data/
 
 # Environment folders
 __pycache__/
 
 # Jupyter Notebook checkpoints
 
-data/
 
 *.bkp
 
