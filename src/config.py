@@ -61,7 +61,51 @@ def get_config() -> Config:
     return load_config()
 
 
-# Example usage 
+def load_datasets_registry(registry_path: str = None) -> Dict[str, Any]:
+    """Load the datasets registry from YAML file.
+    """
+    if registry_path is None:
+        project_root = Path(__file__).parent.parent
+        registry_path = project_root / "data" / "datasets.yaml"
+    else:
+        registry_path = Path(registry_path)
+
+    if not registry_path.exists():
+        raise FileNotFoundError(
+            f"Dataset registry not found: {registry_path}\n"
+            f"Please ensure data/datasets.yaml exists."
+        )
+
+    with open(registry_path, 'r') as f:
+        registry = yaml.safe_load(f)
+
+    return registry.get('datasets', {})
+
+
+def get_dataset_config(dataset_name: str) -> Dict[str, Any]:
+    datasets = load_datasets_registry()
+
+    if dataset_name not in datasets:
+        available = ', '.join(datasets.keys())
+        raise ValueError(
+            f"Dataset '{dataset_name}' not found in registry.\n"
+            f"Available datasets: {available}"
+        )
+
+    return datasets[dataset_name]
+
+
+def list_available_datasets() -> list:
+    datasets = load_datasets_registry()
+    return list(datasets.keys())
+
+
+def validate_dataset_exists(dataset_name: str) -> bool:
+    datasets = load_datasets_registry()
+    return dataset_name in datasets
+
+
+# Example usage
 if __name__ == "__main__":
     config = get_config()
 
@@ -70,6 +114,13 @@ if __name__ == "__main__":
     print(f"Generators: {config.models.generators}")
 
     print(f"Random State: {config.get('experiment.random_state', 42)}")
-
-    print(f"Test Size: {config.data_preparation.test_size}")
     print(f"Parallel Jobs: {config.execution.parallel.n_jobs}")
+
+    print("\n  Dataset Registry  ")
+    print(f"Available datasets: {list_available_datasets()}")
+
+    for dataset_name in list_available_datasets():
+        dataset_config = get_dataset_config(dataset_name)
+        print(f"\n{dataset_name}:")
+        print(f"  Target column: {dataset_config['target_column']}")
+        print(f"  Processed path: {dataset_config['processed_path']}")

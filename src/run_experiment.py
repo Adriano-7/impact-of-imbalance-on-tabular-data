@@ -5,6 +5,7 @@ import glob
 import re
 import os
 import sys
+import argparse
 from joblib import Parallel, delayed
 import time
 from datetime import datetime
@@ -17,22 +18,23 @@ from sklearn.metrics import classification_report, roc_auc_score
 from synthcity.plugins import Plugins
 from synthcity.plugins.core.dataloader import GenericDataLoader
 
-from config import get_config
+from config import get_config, get_dataset_config, list_available_datasets
 
 # Load configuration
 config = get_config()
 
 BASE_PATH = Path(__file__).parent.parent
-PROCESSED_PATH = BASE_PATH / "data" / "processed"
 SYNTHETIC_PATH_BASE = BASE_PATH / "data" / "synthetic"
-RESULTS_PATH = BASE_PATH / "results"
-TABLES_PATH = RESULTS_PATH / "tables"
-FIGURES_PATH = RESULTS_PATH / "figures"
 MODELS_PATH = BASE_PATH / "models"
 
+# These will be set dynamically based on dataset
+PROCESSED_PATH = None
+RESULTS_PATH = None
+TABLES_PATH = None
+FIGURES_PATH = None
 SYNTHETIC_PATH = None
+TARGET_FEATURE = None
 
-TARGET_FEATURE = "Severity"
 CLASS_BENIGN = 0
 CLASS_MALIGNANT = 1
 
@@ -40,8 +42,6 @@ RANDOM_STATE = config.experiment.random_state
 GENERATORS_TO_TEST = config.models.generators
 
 SYNTHETIC_PATH_BASE.mkdir(exist_ok=True)
-TABLES_PATH.mkdir(exist_ok=True)
-FIGURES_PATH.mkdir(exist_ok=True)
 MODELS_PATH.mkdir(exist_ok=True)
 
 monitoring_active = False
@@ -243,20 +243,47 @@ class ProgressTracker:
         print(f"\rProgress: [{bar}] {percent:5.1f}% ({self.completed}/{self.total_datasets}) | ETA: {eta}   ", end='', flush=True)
 
 
-def main():
-    global SYNTHETIC_PATH
+def setup_dataset_paths(dataset_name: str, timestamp: str):
+    global PROCESSED_PATH, RESULTS_PATH, TABLES_PATH, FIGURES_PATH, SYNTHETIC_PATH, TARGET_FEATURE
 
-    print("Mammographic Mass Experimental Pipeline")
+    # Load dataset configuration
+    dataset_config = get_dataset_config(dataset_name)
 
+    # Set paths based on dataset configuration
+    PROCESSED_PATH = BASE_PATH / dataset_config['processed_path']
+    RESULTS_PATH = BASE_PATH / dataset_config['results_path']
+    TABLES_PATH = RESULTS_PATH / "tables"
+    FIGURES_PATH = RESULTS_PATH / "figures"
+    SYNTHETIC_PATH = SYNTHETIC_PATH_BASE / f"run_{timestamp}" / dataset_name
+    TARGET_FEATURE = dataset_config['target_column']
+
+    # Create directories
+    SYNTHETIC_PATH.mkdir(parents=True, exist_ok=True)
+    TABLES_PATH.mkdir(parents=True, exist_ok=True)
+    FIGURES_PATH.mkdir(parents=True, exist_ok=True)
+
+
+def main(dataset_name: str = "mammographic_mass"):
+    """Run experiments for a specific dataset.
+    """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    SYNTHETIC_PATH = SYNTHETIC_PATH_BASE / f"run_{timestamp}"
-    SYNTHETIC_PATH.mkdir(exist_ok=True)
 
-    print(f"Synthetic data will be saved to: {SYNTHETIC_PATH}")
+    # Setup paths for this dataset
+    setup_dataset_paths(dataset_name, timestamp)
+
+    print(f"\n\n")
+    print(f"Experimental Pipeline - Dataset: {dataset_name}")
+    print(f"\n")
+
+    print(f"\nDataset Configuration:")
+    print(f"  • Target column: {TARGET_FEATURE}")
+    print(f"  • Processed data: {PROCESSED_PATH}")
+    print(f"  • Results path: {RESULTS_PATH}")
+    print(f"  • Synthetic data: {SYNTHETIC_PATH}")
 
     start_time = time.time()
     test_path = PROCESSED_PATH / "test.csv"
-    
+
     train_paths = sorted(glob.glob(str(PROCESSED_PATH / "train_*.csv")))
     
     if not train_paths:
@@ -352,6 +379,88 @@ def main():
         auc_std = summary_table.loc[model, ('roc_auc', 'std')]
         print(f"   {model:<15} | F1: {f1_mean:.4f} (±{f1_std:.4f}) | AUC: {auc_mean:.4f} (±{auc_std:.4f})")
             
+def parse_arguments():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Run synthetic data generation experiments on tabular datasets",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run experiments on a single dataset
+  python src/run_experiment.py --dataset mammographic_mass
+
+  # Run experiments on all registered datasets
+  python src/run_experiment.py --dataset all
+
+  # List available datasets
+  python src/run_experiment.py --list-datasets
+        """
+    )
+
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="mammographic_mass",
+        help="Name of the dataset to run experiments on, or 'all' to run on all datasets"
+    )
+
+    parser.add_argument(
+        "--list-datasets",
+        action="store_true",
+        help="List all available datasets and exit"
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
-    main()
+
+    args = parse_arguments()
+
+    # List datasets if requested
+    if args.list_datasets:
+        print("Available datasets:")
+        for dataset in list_available_datasets():
+            dataset_config = get_dataset_config(dataset)
+            print(f"  • {dataset}")
+            print(f"    - Target: {dataset_config['target_column']}")
+            print(f"    - Path: {dataset_config['processed_path']}")
+            if 'description' in dataset_config:
+                print(f"    - Description: {dataset_config['description']}")
+        sys.exit(0)
+
+    # Run experiments on specified dataset(s)
+    if args.dataset.lower() == "all":
+        print("Running experiments on all datasets...")
+        available_datasets = list_available_datasets()
+        print(f"Found {len(available_datasets)} datasets: {', '.join(available_datasets)}\n")
+
+        for dataset in available_datasets:
+            try:
+                print(f"\n\n")
+                print(f"Starting experiments for dataset: {dataset}")
+                print(f"\n\n")
+                main(dataset)
+            except Exception as e:
+                print(f"\nERROR running experiments for {dataset}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+
+        print(f"\n\n")
+        print("All dataset experiments completed!")
+        print(f"\n\n")
+    else:
+        # Run on single dataset
+        try:
+            main(args.dataset)
+        except ValueError as e:
+            print(f"ERROR: {e}")
+            print("\nUse --list-datasets to see available datasets")
+            sys.exit(1)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
