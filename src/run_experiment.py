@@ -17,6 +17,10 @@ from sklearn.metrics import classification_report, roc_auc_score
 from synthcity.plugins import Plugins
 from synthcity.plugins.core.dataloader import GenericDataLoader
 
+from config import get_config
+
+# Load configuration
+config = get_config()
 
 BASE_PATH = Path(__file__).parent.parent
 PROCESSED_PATH = BASE_PATH / "data" / "processed"
@@ -26,15 +30,14 @@ TABLES_PATH = RESULTS_PATH / "tables"
 FIGURES_PATH = RESULTS_PATH / "figures"
 MODELS_PATH = BASE_PATH / "models"
 
+# Domain-specific constants (dataset schema)
 TARGET_FEATURE = "Severity"
-RANDOM_STATE = 42
+CLASS_BENIGN = 0
+CLASS_MALIGNANT = 1
 
-GENERATORS_TO_TEST = [
-    "ddpm",
-    "nflow",
-    "ctgan",
-    "tvae",
-]
+# Experimental parameters from config
+RANDOM_STATE = config.experiment.random_state
+GENERATORS_TO_TEST = config.models.generators
 
 SYNTHETIC_PATH.mkdir(exist_ok=True)
 TABLES_PATH.mkdir(exist_ok=True)
@@ -51,12 +54,15 @@ def format_bytes(bytes_val):
     return f"{bytes_val:.1f}TB"
 
 
-def monitor_resources(interval=5):
+def monitor_resources(interval=None):
     global monitoring_active
+    if interval is None:
+        interval = config.execution.resource_monitor.interval
+
     while monitoring_active:
         cpu_percent = psutil.cpu_percent(interval=1)
         memory = psutil.virtual_memory()
-        
+
         print(f"\r CPU: {cpu_percent:5.1f}% | RAM: {format_bytes(memory.used)}/{format_bytes(memory.total)} ({memory.percent:.1f}%)", end='', flush=True)
         time.sleep(interval)
 
@@ -103,7 +109,10 @@ def train_and_evaluate_classifier(train_df: pd.DataFrame, test_df: pd.DataFrame)
     X_test = test_df.drop(columns=[TARGET_FEATURE])
     y_test = test_df[TARGET_FEATURE]
 
-    model = RandomForestClassifier(random_state=RANDOM_STATE, n_jobs=-1)
+    model = RandomForestClassifier(
+        random_state=config.models.random_forest.random_state,
+        n_jobs=config.models.random_forest.n_jobs
+    )
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -143,12 +152,12 @@ def run_single_experiment(train_path: Path, test_path: Path, generator_name: str
             generator.fit(loader, cond=train_df[TARGET_FEATURE])
 
             value_counts = train_df[TARGET_FEATURE].value_counts()
-            n_benign = value_counts.get(0, 0)
-            n_malignant = value_counts.get(1, 0)
-            
+            n_benign = value_counts.get(CLASS_BENIGN, 0)
+            n_malignant = value_counts.get(CLASS_MALIGNANT, 0)
+
             if n_benign > n_malignant:
                 n_to_generate = n_benign - n_malignant
-                minority_class_label = 1
+                minority_class_label = CLASS_MALIGNANT
                 conditions = [minority_class_label] * n_to_generate
                 
                 synth_data = generator.generate(count=n_to_generate, cond=conditions).dataframe()
@@ -272,7 +281,11 @@ def main():
     train_paths = [Path(p) for p in train_paths]
     
     try:
-        all_results_nested = Parallel(n_jobs=4, backend='loky', verbose=0)(
+        all_results_nested = Parallel(
+            n_jobs=config.execution.parallel.n_jobs,
+            backend=config.execution.parallel.backend,
+            verbose=0
+        )(
             delayed(process_single_dataset)(train_path, test_path, idx+1, n_datasets)
             for idx, train_path in enumerate(train_paths)
         )
