@@ -1,7 +1,4 @@
 import os
-# Force CPU usage - must be set before importing torch/synthcity
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
 import pandas as pd
 from pathlib import Path
 import warnings
@@ -30,7 +27,6 @@ config = get_config()
 
 BASE_PATH = Path(__file__).parent.parent  # Project root (parent of src/)
 SYNTHETIC_PATH_BASE = BASE_PATH / "data" / "synthetic"
-MODELS_PATH = BASE_PATH / "models"
 
 # These will be set dynamically based on dataset
 PROCESSED_PATH = None
@@ -40,14 +36,10 @@ FIGURES_PATH = None
 SYNTHETIC_PATH = None
 TARGET_FEATURE = None
 
-CLASS_BENIGN = 0
-CLASS_MALIGNANT = 1
-
 RANDOM_STATE = config.experiment.random_state
 GENERATORS_TO_TEST = config.models.generators
 
 SYNTHETIC_PATH_BASE.mkdir(exist_ok=True)
-MODELS_PATH.mkdir(exist_ok=True)
 
 monitoring_active = False
 
@@ -157,17 +149,20 @@ def run_single_experiment(train_path: Path, test_path: Path, generator_name: str
             generator.fit(loader, cond=train_df[TARGET_FEATURE])
 
             value_counts = train_df[TARGET_FEATURE].value_counts()
-            n_benign = value_counts.get(CLASS_BENIGN, 0)
-            n_malignant = value_counts.get(CLASS_MALIGNANT, 0)
 
-            if n_benign > n_malignant:
-                n_to_generate = n_benign - n_malignant
-                minority_class_label = CLASS_MALIGNANT
+            # Dynamically determine majority and minority classes
+            majority_class_label = value_counts.idxmax()
+            minority_class_label = value_counts.idxmin()
+            n_majority = value_counts.max()
+            n_minority = value_counts.min()
+
+            if n_majority > n_minority:
+                n_to_generate = n_majority - n_minority
                 conditions = [minority_class_label] * n_to_generate
-                
+
                 synth_data = generator.generate(count=n_to_generate, cond=conditions).dataframe()
                 balanced_train_df = pd.concat([train_df, synth_data], ignore_index=True)
-                
+
                 synth_filename = f"{train_path.stem}_balanced_by_{generator_name}.csv"
                 balanced_train_df.to_csv(SYNTHETIC_PATH / synth_filename, index=False)
             else:
@@ -191,24 +186,33 @@ def process_single_dataset(train_path: Path, test_path: Path, dataset_idx: int, 
     results = []
     dataset_info = extract_dataset_info(train_path.name)
     start_time = time.time()
-    
+
+    print(f"\n[{dataset_idx}/{total_datasets}] Processing: {train_path.name}")
+
     # Baseline
     try:
+        print(f"  → Running baseline...")
         baseline_result = run_single_experiment(train_path, test_path, "baseline", "N/A")
         results.append(baseline_result)
+        print(f"  ✓ Baseline completed")
     except Exception as e:
         print(f"\n[ERROR] Baseline failed on {train_path.name}: {e}")
 
     # Generators
     for generator in GENERATORS_TO_TEST:
         try:
+            print(f"  → Running {generator}...")
             synthetic_result = run_single_experiment(
                 train_path, test_path, generator, "Naive Oversampling"
             )
             results.append(synthetic_result)
+            print(f"  ✓ {generator} completed")
         except Exception as e:
             print(f"\n[ERROR] Generator '{generator}' failed on {train_path.name}: {e}")
-    
+
+    elapsed = time.time() - start_time
+    print(f"[{dataset_idx}/{total_datasets}] Completed in {elapsed:.1f}s")
+
     return results
 
 class ProgressTracker:
@@ -316,7 +320,7 @@ def main(dataset_name: str = "mammographic_mass"):
         all_results_nested = Parallel(
             n_jobs=config.execution.parallel.n_jobs,
             backend=config.execution.parallel.backend,
-            verbose=0
+            verbose=10
         )(
             delayed(process_single_dataset)(train_path, test_path, idx+1, n_datasets)
             for idx, train_path in enumerate(train_paths)

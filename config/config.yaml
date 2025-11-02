@@ -17,8 +17,10 @@ models:
 
 execution:
   # Parallel processing
+  # Set to 1 for GPU usage to avoid memory contention
+  # Set to -1 or higher for CPU-only mode
   parallel:
-    n_jobs: 4
+    n_jobs: 1
     backend: loky
 
   resource_monitor:
