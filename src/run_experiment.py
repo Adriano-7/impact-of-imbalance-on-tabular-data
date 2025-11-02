@@ -1,9 +1,12 @@
+import os
+# Force CPU usage - must be set before importing torch/synthcity
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
 import pandas as pd
 from pathlib import Path
 import warnings
 import glob
 import re
-import os
 import sys
 import argparse
 from joblib import Parallel, delayed
@@ -18,12 +21,14 @@ from sklearn.metrics import classification_report, roc_auc_score
 from synthcity.plugins import Plugins
 from synthcity.plugins.core.dataloader import GenericDataLoader
 
-from config import get_config, get_dataset_config, list_available_datasets
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.config import get_config, get_dataset_config, list_available_datasets
 
 # Load configuration
 config = get_config()
 
-BASE_PATH = Path(__file__).parent.parent
+BASE_PATH = Path(__file__).parent.parent  # Project root (parent of src/)
 SYNTHETIC_PATH_BASE = BASE_PATH / "data" / "synthetic"
 MODELS_PATH = BASE_PATH / "models"
 
@@ -140,13 +145,13 @@ def train_and_evaluate_classifier(train_df: pd.DataFrame, test_df: pd.DataFrame)
 def run_single_experiment(train_path: Path, test_path: Path, generator_name: str, strategy: str):
     train_df, test_df = load_data(train_path, test_path)
     dataset_info = extract_dataset_info(train_path.name)
-    
+
     if generator_name.lower() == 'baseline':
         results = train_and_evaluate_classifier(train_df, test_df)
     else:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            
+
             loader = GenericDataLoader(train_df, target_column=TARGET_FEATURE)
             generator = Plugins().get(generator_name)
             generator.fit(loader, cond=train_df[TARGET_FEATURE])
@@ -183,36 +188,28 @@ def run_single_experiment(train_path: Path, test_path: Path, generator_name: str
 
 
 def process_single_dataset(train_path: Path, test_path: Path, dataset_idx: int, total_datasets: int):
-    old_stderr = sys.stderr
+    results = []
+    dataset_info = extract_dataset_info(train_path.name)
+    start_time = time.time()
     
+    # Baseline
     try:
-        results = []
-        dataset_info = extract_dataset_info(train_path.name)
-        start_time = time.time()
-        
-        # Baseline
-        try:
-            baseline_result = run_single_experiment(train_path, test_path, "baseline", "N/A")
-            results.append(baseline_result)
-        except Exception:
-            pass
-        
-        # Generators
-        for generator in GENERATORS_TO_TEST:
-            try:
-                synthetic_result = run_single_experiment(
-                    train_path, test_path, generator, "Naive Oversampling"
-                )
-                results.append(synthetic_result)
-            except Exception:
-                pass
-        
-        return results
-    
-    finally:
-        sys.stderr.close()
-        sys.stderr = old_stderr
+        baseline_result = run_single_experiment(train_path, test_path, "baseline", "N/A")
+        results.append(baseline_result)
+    except Exception as e:
+        print(f"\n[ERROR] Baseline failed on {train_path.name}: {e}")
 
+    # Generators
+    for generator in GENERATORS_TO_TEST:
+        try:
+            synthetic_result = run_single_experiment(
+                train_path, test_path, generator, "Naive Oversampling"
+            )
+            results.append(synthetic_result)
+        except Exception as e:
+            print(f"\n[ERROR] Generator '{generator}' failed on {train_path.name}: {e}")
+    
+    return results
 
 class ProgressTracker:
     def __init__(self, total_datasets):
@@ -387,13 +384,13 @@ def parse_arguments():
         epilog="""
 Examples:
   # Run experiments on a single dataset
-  python src/run_experiment.py --dataset mammographic_mass
+  python run_experiment.py --dataset mammographic_mass
 
   # Run experiments on all registered datasets
-  python src/run_experiment.py --dataset all
+  python run_experiment.py --dataset all
 
   # List available datasets
-  python src/run_experiment.py --list-datasets
+  python run_experiment.py --list-datasets
         """
     )
 
